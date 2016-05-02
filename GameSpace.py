@@ -55,7 +55,7 @@ class GameSpace:
           self.serv_conn.transport.write(str.encode("start \r\n"))
     if keys[pygame.K_m]!=0 and self.mode==3: 
           self.player1.car.tofire=True 
-          self.serv_conn.transport.write(str.encode("fire_start \r\n"))
+          self.serv_conn.transport.write(str.encode("fire_start " + str(self.player1.car.degree) + '\r\n'))
     if keys[pygame.K_RIGHT]!=0:
           self.player1.car.setVector(15,0)
           self.serv_conn.transport.write(str.encode("right \r\n"))
@@ -188,6 +188,8 @@ class GameSpace:
     self.generate_coins()
     self.player1.buy_property("bank")
     self.player2.buy_property("bank")
+
+    self.player2.car.setDig = True
     
   #generate coins   
   def generate_coins(self):
@@ -372,6 +374,7 @@ class GameServer(LineReceiver):
       self.gs.player2.car.setVector(0, 15)
     elif data[0] == 'fire_start':
       self.gs.player2.car.tofire = True
+      self.gs.player2.car.degree = float(data[1])
     elif data[0] == 'fire_stop':
       self.gs.player2.car.tofire = False
     elif data[0] == 'score':

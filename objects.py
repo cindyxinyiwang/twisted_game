@@ -192,6 +192,8 @@ class Car(pygame.sprite.Sprite):
       
     # fire laser beams right now ?
     self.tofire=False
+    self.setDig = False
+    self.degree = 0
     self.points=500
     self.fullPoints=500
     self.dgr=0
@@ -218,13 +220,21 @@ class Car(pygame.sprite.Sprite):
   
   def fire(self,mx,my):
     # calc angle of fire
-    px,py = self.rect.center
-    radius=math.atan2(my-py,mx-px)
-    px+=40*math.cos(radius)
-    py+=40*math.sin(radius)
-    fire_angle=math.atan2(my-py,mx-px)
-    ilaser=Laser(px,py,fire_angle,self.gs)
-    self.player.laserList.append(ilaser)
+    if self.setDig:
+      px,py = self.rect.center
+      ilaser=Laser(px,py, self.degree, self.gs)
+      self.player.laserList.append(ilaser)
+      print (self.degree)
+    else:
+      px,py = self.rect.center
+      radius=math.atan2(my-py,mx-px)
+      px+=40*math.cos(radius)
+      py+=40*math.sin(radius)
+      fire_angle=math.atan2(my-py,mx-px)
+      self.degree = fire_angle
+
+      ilaser=Laser(px,py,fire_angle,self.gs)
+      self.player.laserList.append(ilaser)
     
   def setVector(self,x,y):
     self.dx=x
