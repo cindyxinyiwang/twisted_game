@@ -1,16 +1,17 @@
+import sys,pygame,math,random
+from objects import *
+
 from twisted.internet.protocol import ServerFactory, ClientFactory
 from twisted.internet.protocol import Protocol
 from twisted.protocols.basic import LineReceiver
 from twisted.internet import reactor
-
-import sys,pygame,math,random
-from objects import *
 from twisted.internet.task import LoopingCall
+
 
 class GameSpace:
   def __init__(self):
     pygame.init()
-    
+
     self.size = self.width,self.height=1200,750
     self.black = 0,0,0
     self.screen = pygame.display.set_mode(self.size)
@@ -25,10 +26,11 @@ class GameSpace:
 
     self.itext=Text("Remaining Time: 60",30,self)
     self.itext.set_center(self.width/2,50)
+    self.tick=0
     
     self.joined = False
-    self.tick = 0
-    self.client_conn = None
+
+    self.serv_conn = None
     # set up game objects
     self.set_up_objects()
 
@@ -36,33 +38,39 @@ class GameSpace:
   def check_event(self,event):
     # any other key event input
     if event.type == pygame.QUIT:
-          reactor.stop()      
+          if self.serv_conn:
+            self.serv_conn.transport.loseConnection()
+          reactor.stop()
+          #sys.exit()       
     elif event.type == pygame.KEYDOWN:
           if event.key == pygame.K_ESCAPE:
-                reactor.stop()
+              if self.serv_conn:
+                self.serv_conn.transport.loseConnection()
+                #sys.exit()
+              reactor.stop()
     # get key current state
     keys = pygame.key.get_pressed()
     if keys[pygame.K_RETURN]:
           self.mode=1
+          self.serv_conn.transport.write(str.encode("start \r\n"))
     if keys[pygame.K_m]!=0 and self.mode==3: 
           self.player1.car.tofire=True 
-          self.client_conn.transport.write(str.encode("fire_start \r\n"))
+          self.serv_conn.transport.write(str.encode("fire_start \r\n"))
     if keys[pygame.K_RIGHT]!=0:
           self.player1.car.setVector(15,0)
-          self.client_conn.transport.write(str.encode("right \r\n"))
+          self.serv_conn.transport.write(str.encode("right \r\n"))
     if keys[pygame.K_LEFT]!=0:
           self.player1.car.setVector(-15,0)
-          self.client_conn.transport.write(str.encode("left \r\n"))
+          self.serv_conn.transport.write(str.encode("left \r\n"))
     if keys[pygame.K_UP]!=0:
           self.player1.car.setVector(0,-15)
-          self.client_conn.transport.write(str.encode("up \r\n"))
+          self.serv_conn.transport.write(str.encode("up \r\n"))
     if keys[pygame.K_DOWN]!=0: 
           self.player1.car.setVector(0,15)
-          self.client_conn.transport.write(str.encode("down \r\n"))
+          self.serv_conn.transport.write(str.encode("down \r\n"))
     if keys[pygame.K_m]==0 and self.player1.car.tofire: 
           self.player1.car.tofire= False
-          if self.client_conn:
-          	self.client_conn.transport.write(str.encode("fire_stop \r\n"))
+          self.serv_conn.transport.write(str.encode("fire_stop \r\n"))
     ''' need to be modifed here when combined with twisted'''      
     ## keyboard events for player 2
     if keys[pygame.K_q]!=0 and self.mode==3: 
@@ -175,9 +183,9 @@ class GameSpace:
   # set up game objects
   def set_up_objects(self):
     self.clock=pygame.time.Clock()
-    self.player2 = Player("judy","red",self)
-    self.player1 = Player("Jim","green",self)
-    #self.generate_coins()
+    self.player1 = Player("judy","red",self)
+    self.player2 = Player("Jim","green",self)
+    self.generate_coins()
     self.player1.buy_property("bank")
     self.player2.buy_property("bank")
     
@@ -192,7 +200,7 @@ class GameSpace:
       y=random.randint(100,self.height)
       newcoin = Coin(x,y,self)
       self.coinList.append(newcoin)
-  
+
   # return your opponent
   def get_opponent(self,player):
     if player.color=="red":
@@ -288,10 +296,10 @@ class GameSpace:
              
   def main(self):
     # 3: start game loop
-
+    
     self.tick+=1
-    #self.clock.tick(60)
-    ## check and respond to the event for a given tick
+      
+	  ## check and respond to the event for a given tick
     for event in pygame.event.get():
       self.check_event(event)
 
@@ -321,111 +329,108 @@ class GameSpace:
       
     pygame.display.flip()
 
+class GameServer(LineReceiver):
+  def __init__(self, hostcontroller, gs):
+    self.host_controller = hostcontroller
+    self.connections = {}
+    self.gs = gs
+    self.gs.serv_conn = self
+    pass
 
-class GameClient(LineReceiver):
-	def __init__(self, name, game_client_controller, gs):
-		self.name = name
-		self.game_client_controller = game_client_controller
-		self.gs = gs
-		self.gs.client_conn = self
-		pass
+  def connectionMade(self):
+    self.gs.joined = True
+    print ("new player!")
+    # send coin config to client
+    for c in self.gs.coinList:
+      x, y = c.rect.center
+      string = "coin " + str(x) + " " + str(y) + "\r\n"
+      print (string)
+      self.transport.write(str.encode(string))
 
-	def connectionMade(self):
-		print ("connect to game host!")
-		print(self.name)
-		self.transport.write(str.encode("new " + self.name))
-		self.gs.joined = True
+    # initialize new client
+    #for k in self.host_controller.scores:
+    #  s = self.host_controller.scores[k]
+    #  self.transport.write("init " + k + " " + str(s) + " ")
 
-	def lineReceived(self, data):
-		self.game_client_controller.update(data)
-		self.game_client_controller.print_state()
+  def lineReceived(self, data):
+    data = data.decode("utf-8")
+    data = data.split()
+    if data[0] == 'new':
+      self.connections[data[1]] = 5
+      name = data[1]
+      if name not in self.host_controller.players:
+        self.host_controller.players.append(name)
+        self.host_controller.scores[name] = 5
 
-	def connectionLost(self, reason):
-		print ("connection lost with host!")
+    elif data[0] == 'right':
+      self.gs.player2.car.setVector(15, 0)
+    elif data[0] == 'left':
+      self.gs.player2.car.setVector(-15, 0)
+    elif data[0] == 'up':
+      self.gs.player2.car.setVector(0, -15)
+    elif data[0] == 'down':
+      self.gs.player2.car.setVector(0, 15)
+    elif data[0] == 'fire_start':
+      self.gs.player2.car.tofire = True
+    elif data[0] == 'fire_stop':
+      self.gs.player2.car.tofire = False
+    elif data[0] == 'score':
+      name = data[1]
+      action = data[2]
+      num = int(data[3])
+      if action == '+':
+        self.host_controller.scores[name] += num
+      elif action == '-':
+        self.host_controller.scores[name] -= num
+    print (self.host_controller.players)
+    # broadcaste to all clients
+    #self.host_controller.update(msg)
 
-
-class GameClientFactory(ClientFactory):
-	def __init__(self, game_client_controller, gs):
-		self.name = game_client_controller.name
-		self.game_client_controller = game_client_controller
-		self.gs = gs
-		pass
-
-	def buildProtocol(self, addr):
-		return GameClient(self.name, self.game_client_controller, self.gs)
-
-class GameClientController(object):
-	def __init__(self, name, gs):
-		self.name = name
-		self.client_factory= GameClientFactory(self, gs)
-		self.players = []
-		self.scores = {}
-		self.gs = gs
-		pass
-
-	def print_state(self):
-		print (self.scores)
-
-	def update(self, msg):
-		msg = msg.decode("utf-8")
-		data = msg.split()
-		if data[0] == 'new':
-			name = data[1]
-			if name not in self.players:
-				self.players.append(name)
-				self.scores[name] = 5
-		elif data[0] == 'score':
-			name = data[1]
-			action = data[2]
-			num = int(data[3])
-			if action == '+':
-				self.scores[name] += num
-			elif action == '-':
-				self.scores[name] -= num
-		elif data[0] == 'start':
-			
-			self.gs.mode = 1
-
-		elif data[0] == 'coin':
-			x = int(data[1])
-			y = int(data[2])
-			self.gs.coinList.append(Coin(x, y, self.gs))
-
-		elif data[0] == 'right':
-			self.gs.player2.car.setVector(15, 0)
-		elif data[0] == 'left':
-			self.gs.player2.car.setVector(-15, 0)
-		elif data[0] == 'up':
-			self.gs.player2.car.setVector(0, -15)
-		elif data[0] == 'down':
-			self.gs.player2.car.setVector(0, 15)
-		elif data[0] == 'fire_start':
-			print (data)
-			self.gs.player2.car.tofire = True
-		elif data[0] == 'fire_stop':
-			self.gs.player2.car.tofire = False
-		elif data[0] == 'init':
-			# initialization
-			data = filter(lambda x: x != 'init', data)
-			i = 0
-			while (i < len(data)):
-				name = data[i]
-				score = int(data[i+1])
-				self.players.append(name)
-				self.scores[name] = score
-				i += 2
+  def connectionLost(self, reason):
+    print(reason)
+    print ("a player lost!")
 
 
-if __name__ == "__main__":
-	GSERVER_HOST = "localhost"
-	GSERVER_PORT = 40095
+class GameServerFactory(ServerFactory):
+  def __init__(self, hostcontroller, gs):
+    self.host_controller = hostcontroller
+    self.gs = gs
+    pass
 
-	gs = GameSpace()
-	lc = LoopingCall(gs.main)
-	lc.start(1/60)
+  def buildProtocol(self, addr):
+    g = GameServer(self.host_controller, gs)
+    self.host_controller.serv_conns.append(g)
+    return g
 
-	name = "xwang29"
-	gcc = GameClientController(name, gs)
+class GameHostController(object):
+  def __init__(self, gs):
+    self.serv_factory = GameServerFactory(self, gs)
+    self.players = []
+    self.scores = {}
+    self.serv_conns = []
+    self.gamespace = gs
 
-	reactor.connectTCP(GSERVER_HOST, GSERVER_PORT, gcc.client_factory)
-	reactor.run()
+  def update(self, msg):
+    for s in self.serv_conns:
+      s.transport.write(msg)
+
+
+if __name__=='__main__':
+
+  GSERVER_PORT = 40095
+
+
+  gs = GameSpace()
+  #gs.main()
+
+  lc = LoopingCall(gs.main)
+  lc.start(1/60)
+
+  game_host = GameHostController(gs)
+
+  reactor.listenTCP(GSERVER_PORT, game_host.serv_factory)
+  reactor.run()
+
+  
+
+
